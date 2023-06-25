@@ -1,8 +1,63 @@
 use base64::{engine, Engine};
 use reqwest::header::{HeaderMap, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::io;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ExternalUrls {
+    spotify: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Artist {
+    name: String,
+    external_urls: ExternalUrls,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Album {
+    name: String,
+    artists: Vec<Artist>,
+    external_urls: ExternalUrls,
+}
+#[derive(Serialize, Deserialize, Debug)]
+struct Track {
+    name: String,
+    href: String,
+    popularity: u32,
+    album: Album,
+    external_urls: ExternalUrls,
+}
+#[derive(Serialize, Deserialize, Debug)]
+struct Items<T> {
+    items: Vec<T>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct APIResponse {
+    tracks: Items<Track>,
+}
+
+fn print_tracks(tracks: Vec<&Track>) {
+    for track in tracks {
+        println!("{}", track.name);
+        println!("{}", track.album.name);
+        println!(
+            "{}",
+            track
+                .album
+                .artists
+                .iter()
+                .map(|artist| artist.name.to_string())
+                .collect::<String>()
+        );
+        println!("{}", track.external_urls.spotify);
+        println!("------------------");
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client_id = env::var("client_id")?;
     let client_secret = env::var("client_secret")?;
-    let redirect_uri = ("http://localhost:3000");
+    //let redirect_uri = ("http://localhost:3000");
 
     let auth_string = format!("{}:{}", client_id, client_secret);
     let auth_base64 = engine::general_purpose::STANDARD.encode(auth_string); // Oh brother this shit stinks
@@ -47,6 +102,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .to_string();
 
     println!("{}", access_token);
+
+    //song request begins:
+    //let args: Vec<String> = env::args().collect();
+    println!("Enter song: ");
+    let mut search = String::new();
+    io::stdin()
+        .read_line(&mut search)
+        .expect("Could not read line :(");
+    println!("{}", search);
+
+    let url = format!(
+        "https://api.spotify.com/v1/search?q={query}&type=track,artist",
+        query = search,
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(url)
+        .header(AUTHORIZATION, format!("Bearer {}", access_token))
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .unwrap();
+
+    match response.status() {
+        reqwest::StatusCode::OK => {
+            match response.json::<APIResponse>().await {
+                Ok(parsed) => print_tracks(parsed.tracks.items.iter().collect()),
+                Err(_) => println!("Hm, the response didn't match the shape we expected."),
+            };
+        }
+        reqwest::StatusCode::UNAUTHORIZED => {
+            println!("Token error.");
+        }
+        other => {
+            panic!("Uh oh! Something unexpected happened: {:?}", other);
+        }
+    };
 
     Ok(())
 }
